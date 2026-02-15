@@ -1,9 +1,15 @@
 import express from "express"
 import cors from "cors"
 import crypto from "crypto"
+import { Redis } from "ioredis";
 import { prisma } from "./lib/prisma";
 
 const app = express();
+const redis = new Redis();
+
+redis.on("connect", () => {
+  console.log("Redis connected");
+});
 
 app.use(cors())
 app.use(express.json())
@@ -29,6 +35,9 @@ app.post("/shortener", async (req, res) => {
                 expiresAt,
             },
         });
+
+        await redis.set(`code:${shortUrl}`, longUrl, "EX", 60 * 60 * 24);
+        
         return res.status(201).json({
             id: newUrl.id,
             shortUrl: `http://localhost:3000/${newUrl.shortUrl}`,
@@ -45,6 +54,12 @@ app.post("/shortener", async (req, res) => {
 app.get("/:shortUrl", async (req, res) => {
     const { shortUrl } = req.params;
 
+    const cached = await redis.get(`code:${shortUrl}`);
+    
+    if (cached) {
+        return res.redirect(cached);
+    }
+    
     const link = await prisma.url.findUnique({
         where:{
             shortUrl
@@ -57,6 +72,8 @@ app.get("/:shortUrl", async (req, res) => {
         });
     }
 
+    await redis.set(`code:${shortUrl}`, link.longUrl, "EX", 60 * 60 * 24);
+    
     res.redirect(link.longUrl)
 })
 
